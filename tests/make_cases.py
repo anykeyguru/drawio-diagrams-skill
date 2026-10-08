@@ -18,7 +18,7 @@ for old in OUT.glob("*.drawio"):
 
 
 def save(name, page):
-    Diagram([page]).write(OUT / f"{name}.drawio")
+    Diagram([page]).write(OUT / f"{name}.drawio", backup=False)
 
 
 def two_boxes(p):

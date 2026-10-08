@@ -42,7 +42,12 @@ was with the mouse.
 7. **Generated, not dragged.** The diagram is a Python script using
    `scripts/drawio_kit.py`. The `.drawio` stays editable, but the script is the source
    of truth, so the layout can be rebuilt after any change and re-checked.
-8. **Checked before delivery.** `scripts/check_layout.py` must report 0 errors; aim
+8. **Previous versions are backed up, never committed.** Overwriting a diagram copies
+   the old file to `.drawio-backups/` next to it (newest 10 kept) and the kit keeps
+   that folder and draw.io's own `.$*.bkp` files in the project's `.gitignore`. If the
+   file was edited after the last build (by hand in draw.io), the build says so: carry
+   those edits into the generator, the backup holds them.
+9. **Checked before delivery.** `scripts/check_layout.py` must report 0 errors; aim
    for 0 warnings. Then look at the exported PNG yourself.
 
 ## Workflow
@@ -96,6 +101,7 @@ docs/
   build_architecture.py       the generator: one function per tab
   architecture.drawio         generated, editable in draw.io
   architecture-<N>-<slug>.png exported previews for README / Confluence
+  .drawio-backups/            previous versions + last-build fingerprint (git-ignored)
   <flow>-sequence.msd         sequence diagrams (msd-sequence-diagram skill)
   confluence/                 Confluence pages with diagram placeholders
 ```
@@ -134,8 +140,8 @@ python3 <skill>/scripts/review.py docs/architecture.drawio  # check + export eve
 
 `review.py` runs `check_layout.py` and exports each tab to PNG with the draw.io CLI.
 
-**Geometry.** Fix every ERROR in the generator (never by hand in draw.io: it would be
-overwritten). Treat WARNs as defects too unless there is a reason: a crossing usually
+**Geometry.** Fix every ERROR in the generator (not by hand in draw.io: the next build replaces
+the file; the hand-edited version survives only in `.drawio-backups/`). Treat WARNs as defects too unless there is a reason: a crossing usually
 means two boxes should swap places; "text probably does not fit" means widen the box
 or cut the text; "tight corridor" means move the waypoint.
 

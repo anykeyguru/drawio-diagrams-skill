@@ -29,13 +29,15 @@ Typical use (copy this file next to the generator, e.g. docs/drawio_kit.py):
 """
 from __future__ import annotations
 
+import datetime
+import hashlib
 import html
 import pathlib
 import shutil
 import subprocess
 from dataclasses import dataclass
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # 6 px absolute corner radius. Relative arcSize scales with box size and produces
 # the "pill" look on large containers; absoluteArcSize keeps every corner equal.
@@ -159,16 +161,111 @@ class Page:
                 '<root><mxCell id="0"/><mxCell id="1" parent="0"/>\n' + "\n".join(self.cells) + "\n</root></mxGraphModel></diagram>")
 
 
+# Backups of the previous .drawio are kept next to it and never committed.
+BACKUP_DIR = ".drawio-backups"
+BACKUP_KEEP = 10
+GITIGNORE_PATTERNS = (f"{BACKUP_DIR}/", ".$*.bkp")
+
+
+def _git(cwd: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+def ensure_gitignored(path: pathlib.Path) -> list[str]:
+    """Make sure the repository's .gitignore excludes diagram backups.
+
+    Appends the missing patterns (with a comment) to the .gitignore at the git
+    toplevel. Returns the patterns that were added; nothing happens outside git.
+    """
+    top = _git(path.parent, "rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        return []
+    gi = pathlib.Path(top.stdout.strip()) / ".gitignore"
+    text = gi.read_text() if gi.exists() else ""
+    present = {ln.strip() for ln in text.splitlines()}
+    missing = [p for p in GITIGNORE_PATTERNS if p not in present]
+    if missing:
+        block = "\n# draw.io diagram backups (drawio-diagrams skill): local only, never committed\n" + "\n".join(missing) + "\n"
+        gi.write_text((text.rstrip("\n") + "\n" if text else "") + block)
+    return missing
+
+
+def backup_previous(path: pathlib.Path, new_content: str) -> pathlib.Path | None:
+    """Copy the current file to .drawio-backups/<stem>.<timestamp>.drawio before
+    it is overwritten with different content. Keeps the newest BACKUP_KEEP copies."""
+    if not path.exists() or path.read_text() == new_content:
+        return None
+    bdir = path.parent / BACKUP_DIR
+    bdir.mkdir(exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = bdir / f"{path.stem}.{stamp}{path.suffix}"
+    n = 1
+    while dst.exists():
+        dst = bdir / f"{path.stem}.{stamp}-{n}{path.suffix}"
+        n += 1
+    shutil.copy2(path, dst)
+    old = sorted(bdir.glob(f"{path.stem}.*{path.suffix}"), key=lambda q: q.stat().st_mtime)
+    for q in old[:-BACKUP_KEEP]:
+        q.unlink()
+    return dst
+
+
+def _stamp_file(path: pathlib.Path) -> pathlib.Path:
+    return path.parent / BACKUP_DIR / f"{path.name}.last-written.sha256"
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def hand_edited(path: pathlib.Path) -> bool:
+    """True when the file on disk is not what the generator wrote last time, i.e.
+    someone edited it (typically by hand in draw.io) after the last build.
+
+    The fingerprint of every write lives in .drawio-backups/ (git-ignored). Without
+    one (fresh clone) a tracked file that differs from git HEAD counts as edited."""
+    if not path.exists():
+        return False
+    stamp = _stamp_file(path)
+    if stamp.exists():
+        return stamp.read_text().strip() != _sha(path.read_text())
+    if _git(path.parent, "ls-files", "--error-unmatch", path.name).returncode != 0:
+        return False
+    return _git(path.parent, "diff", "--quiet", "HEAD", "--", path.name).returncode == 1
+
+
 class Diagram:
     """A .drawio file: one tab per concern."""
 
     def __init__(self, pages: list[Page]):
         self.pages = pages
 
-    def write(self, path: str | pathlib.Path) -> pathlib.Path:
-        path = pathlib.Path(path)
+    def render(self) -> str:
         body = "\n".join(p.xml() for p in self.pages)
-        path.write_text(f'<mxfile host="Electron" agent="drawio_kit {__version__}" version="24.0.0" type="device">\n{body}\n</mxfile>\n')
+        return f'<mxfile host="Electron" agent="drawio_kit {__version__}" version="24.0.0" type="device">\n{body}\n</mxfile>\n'
+
+    def write(self, path: str | pathlib.Path, backup: bool = True) -> pathlib.Path:
+        """Write the .drawio. With backup=True (default) the previous version is
+        copied to .drawio-backups/ first when the content changes, the project's
+        .gitignore is kept excluding backups, and uncommitted changes to a tracked
+        file (likely hand edits in draw.io) are reported, not silently lost."""
+        path = pathlib.Path(path)
+        content = self.render()
+        if backup:
+            if hand_edited(path):
+                print(f"drawio_kit: {path.name} was changed after the last build (hand edits in draw.io?); "
+                      "they are saved in the backup below, carry them into the generator")
+            saved = backup_previous(path, content)
+            if saved:
+                print(f"drawio_kit: previous version saved to {saved}")
+            added = ensure_gitignored(path)
+            if added:
+                print(f"drawio_kit: added to .gitignore: {', '.join(added)}")
+        path.write_text(content)
+        if backup:
+            stamp = _stamp_file(path)
+            stamp.parent.mkdir(exist_ok=True)
+            stamp.write_text(_sha(content) + "\n")
         return path
 
 

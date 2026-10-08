@@ -9,3 +9,5 @@ examples/*.drawio
 examples/*.png
 # draw.io backup copies
 .$*.bkp
+# diagram backups written by the example generator
+.drawio-backups/

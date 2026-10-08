@@ -78,5 +78,6 @@ Numbering follows the reading order of the main flow (1 is where the story start
 | Kit | `docs/drawio_kit.py`, vendored copy, keep `__version__` |
 | Diagram | `docs/architecture.drawio`, all tabs |
 | Previews | `docs/architecture-<N>-<slug>.png`, exported by the generator or `review.py` |
+| Backups | `docs/.drawio-backups/<name>.<timestamp>.drawio`, newest 10, written by `Diagram.write()` before overwriting; git-ignored together with draw.io's `.$*.bkp` (the kit adds both patterns to `.gitignore`) |
 | Sequence diagrams | `docs/<flow>-sequence.msd` (msd-sequence-diagram skill) |
 | Confluence | `docs/confluence/*.md` with `🖼️ ДИАГРАММА` placeholders |

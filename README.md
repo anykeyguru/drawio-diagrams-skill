@@ -9,7 +9,9 @@ diagrams as **draw.io** files in one house style, and **proves** the result is r
 - corners are absolute 6 px, never pill-shaped;
 - no text on lines: numbered badges, explained in a legend;
 - one tab per concern, generated from a Python script, editable in draw.io;
-- every diagram is checked by geometry **and** exported to PNG for a visual review.
+- every diagram is checked by geometry **and** exported to PNG for a visual review;
+- overwriting a diagram backs up the previous version to `.drawio-backups/` (git-ignored,
+  newest 10) and warns when the file was edited by hand after the last build.
 
 ```
 SKILL.md                      what Claude follows: questions, workflow, rules, delivery
@@ -61,8 +63,12 @@ docs/
   build_architecture.py        generator, one function per tab (source of truth)
   architecture.drawio          generated, editable in draw.io
   architecture-<N>-<slug>.png  previews for README / Confluence
+  .drawio-backups/             previous versions, local only
   confluence/                  pages with diagram placeholders
 ```
+
+`Diagram.write()` keeps `.drawio-backups/` and `.$*.bkp` (draw.io's own backup copies) in
+the repository's `.gitignore`, appending them if missing. Backups never reach git.
 
 ## The checker
 
@@ -88,6 +94,10 @@ tests/run.sh
 
 - 15 generated cases, one per rule, named by the expected verdict (`ok-*`, `warn-*`,
   `err-*`), including a compressed file as the draw.io app may save it;
+- backups, in a throwaway git repo: first write, unchanged rewrite, changed rewrite,
+  invisibility to git, a generator change not mistaken for a hand edit, a real hand edit
+  warned and preserved, rotation to 10, no duplicate `.gitignore` lines, behaviour
+  outside git;
 - the worked example must produce 3 tabs with **zero** findings;
 - `review.py` must export one PNG per tab (skipped without draw.io).
 

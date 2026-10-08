@@ -18,6 +18,9 @@ for f in tests/cases/*.drawio; do
   else printf '  FAIL  %-36s expected %s, got %s\n%s\n' "$(basename "$f")" "$want" "$got" "$out"; fail=1; fi
 done
 
+echo "backups (Diagram.write)"
+python3 tests/test_backups.py || fail=1
+
 echo "worked example"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 python3 - "$tmp/architecture.drawio" <<'PY'
