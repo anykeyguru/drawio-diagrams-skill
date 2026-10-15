@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """One-step review of a .drawio file: geometry check + PNG export of every tab.
 
-    review.py docs/architecture.drawio [--out DIR]
+    review.py docs/architecture.drawio [--out DIR] [--lang xx]
 
-1. Runs check_layout.py on the file (errors -> exit 1, warnings listed).
+1. Runs check_layout.py on the file (errors -> exit 1, warnings listed), language
+   check included when the file carries a lang attribute or --lang is given.
 2. Exports every tab to DIR (default: next to the file, architecture-<N>-<slug>.png)
    with the draw.io desktop CLI.
 3. Prints the PNG paths and the visual checklist: open EVERY image and go through it.
@@ -30,6 +31,7 @@ Visual checklist (open each PNG and confirm every line):
   [ ] no two lines run side by side closer than ~10 px or merge
   [ ] badges are next to their own line, not between two lines, not on a box border
   [ ] all text is fully visible: nothing clipped, nothing spilling out of a box
+  [ ] every label is in the language of the conversation; identifiers as in the code
   [ ] corners look square-ish (6 px), zones read as zones, colours mean one thing
   [ ] the legend explains every badge number and nothing else
   [ ] the main flow reads left -> right or top -> bottom without backtracking
@@ -47,13 +49,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file")
     ap.add_argument("--out", help="directory for PNGs (default: next to the .drawio)")
+    ap.add_argument("--lang", help="diagram language for the label check (default: the file's lang attribute)")
     args = ap.parse_args()
     src = pathlib.Path(args.file).resolve()
     out = pathlib.Path(args.out).resolve() if args.out else src.parent
     out.mkdir(parents=True, exist_ok=True)
 
     print("== geometry check ==", flush=True)
-    rc = subprocess.run([sys.executable, str(HERE / "check_layout.py"), str(src)]).returncode
+    cmd = [sys.executable, str(HERE / "check_layout.py"), str(src)] + (["--lang", args.lang] if args.lang else [])
+    rc = subprocess.run(cmd).returncode
 
     print("\n== export ==")
     if not drawio_binary():

@@ -8,17 +8,24 @@ Checks every page of a .drawio file (plain or compressed) by geometry:
   ERROR  two boxes / notes overlap (containers excluded)
   ERROR  rounded corners not absolute 4..8 px (large radius looks unserious)
   ERROR  edge runs through a container's title
+  ERROR  line label covers a box, another line or another label, or leaves the page
   WARN   two edges cross (drawn with a jump, but better re-routed)
   WARN   edge passes closer than CLEARANCE px to a box (tight corridor)
   WARN   text probably does not fit its box (estimated)
-  WARN   text label on an edge (use a numbered badge + legend instead)
+  WARN   free text on an edge: use a line label (kit `label=`) or a numbered badge
+  WARN   line label too long (a protocol or kind of link, not a sentence) or on a bend
+  WARN   one tab mixes numbered badges and line labels: pick one diagram kind
   WARN   edge without explicit exit/entry: route is drawio's guess, verify visually
+  WARN   label not in the diagram language (identifiers excluded; needs a language)
 
 Edge routes are reconstructed the way orthogonalEdgeStyle draws them: leave the
 source perpendicular to the exit side, pass the waypoints, enter the target
 perpendicular to the entry side. Routes without waypoints get the standard elbow.
 
-Usage: check_layout.py file.drawio [--page N]   exit code 1 if any ERROR
+The diagram language comes from --lang or from the lang attribute drawio_kit writes
+on <mxfile> (Diagram(pages, lang=...)). Without one the language check is skipped.
+
+Usage: check_layout.py file.drawio [--page N] [--lang xx]   exit code 1 if any ERROR
 """
 from __future__ import annotations
 
@@ -36,6 +43,13 @@ from dataclasses import dataclass, field
 CLEARANCE = 6       # px a line should keep from a box it does not touch
 ARC_MIN, ARC_MAX = 4, 8
 TITLE_BAND = 26     # px: height of a container title strip
+LATIN_WORDS_MIN = 4  # Cyrillic-script diagram: this many Latin words and no Cyrillic -> WARN
+
+# Script each language is written in. Only the script is checked: telling Russian
+# from Ukrainian or English from German by letters alone is guesswork.
+CYRILLIC_LANGS = {"ru", "uk", "be", "bg", "sr", "mk", "kk", "ky", "tg", "mn", "uz-cyrl"}
+LATIN_LANGS = {"en", "de", "fr", "es", "it", "pt", "nl", "pl", "cs", "sk", "tr", "uz", "uz-latn",
+               "az", "ro", "hu", "fi", "sv", "da", "no", "nb", "et", "lv", "lt", "id", "vi"}
 
 
 @dataclass
@@ -74,6 +88,11 @@ class Edge:
     points: list = field(default_factory=list)
     path: list = field(default_factory=list)
     badge: str = ""
+    label_x: float = 0         # relative position of the label along the line, -1..1
+
+    @property
+    def labelled(self) -> bool:
+        return "houseLabel" in self.style and bool(text_lines(self.value) and "".join(text_lines(self.value)).strip())
 
 
 def parse_style(s: str) -> dict:
@@ -84,6 +103,57 @@ def parse_style(s: str) -> dict:
         k, _, v = part.partition("=")
         out[k] = v if _ else True
     return out
+
+
+def lang_script(lang: str | None) -> str | None:
+    """'cyrl', 'latn' or None (unknown language: not checked)."""
+    if not lang:
+        return None
+    key = lang.lower()
+    for k in (key, key.split("-")[0]):
+        if k in CYRILLIC_LANGS:
+            return "cyrl"
+        if k in LATIN_LANGS:
+            return "latn"
+    return None
+
+
+def file_lang(path: str) -> str | None:
+    root = ET.parse(path).getroot()
+    return root.get("lang") if root.tag == "mxfile" else None
+
+
+_IDENT_CHARS = re.compile(r"[_/\\.:=<>@#$%{}\[\]()|*`+~^&0-9]")
+_WORD = re.compile(r"[^\W\d_]+(?:[-'’‘][^\W\d_]+)*")
+
+
+def natural_words(text: str) -> tuple[int, int]:
+    """(Cyrillic words, Latin words) in prose, identifiers excluded: tokens with
+    digits or code punctuation (ports, paths, env vars, snake_case, kebab-case), CamelCase and
+    inner capitals (LiteLLM, OpenAI), ALL-CAPS acronyms. A Cyrillic word is never
+    taken for an identifier."""
+    cyr = lat = 0
+    for tok in text.split():
+        tok = tok.strip(".,;:!?()[]«»\"'“”„…—–-")
+        if re.search("[\u0400-\u04ff]", tok):
+            cyr += len([w for w in _WORD.findall(tok) if re.search("[\u0400-\u04ff]", w)])
+            continue
+        if _IDENT_CHARS.search(tok) or "-" in tok:   # kebab-case names: auth-bridge
+            continue
+        for w in _WORD.findall(tok):
+            if len(w) < 2 or w.isupper() or re.search("[a-z][A-Z]", w) or re.search("[A-Z]{2}", w):
+                continue
+            lat += 1
+    return cyr, lat
+
+
+def lang_mismatch(text: str, script: str) -> str | None:
+    cyr, lat = natural_words(text)
+    if script == "latn" and cyr:
+        return f"{cyr} Cyrillic word(s)"
+    if script == "cyrl" and not cyr and lat >= LATIN_WORDS_MIN:
+        return f"{lat} Latin word(s) and no Cyrillic"
+    return None
 
 
 def load_pages(path: str):
@@ -131,7 +201,8 @@ def collect(model):
                 arr = g.find("Array")
                 if arr is not None:
                     pts = [(float(p.get("x", 0)), float(p.get("y", 0))) for p in arr.findall("mxPoint")]
-            edges.append(Edge(c.get("id"), c.get("source"), c.get("target"), st, c.get("value") or "", pts))
+            lx = float(g.get("x", 0)) if g is not None else 0
+            edges.append(Edge(c.get("id"), c.get("source"), c.get("target"), st, c.get("value") or "", pts, label_x=lx))
     # badges
     for c in cells.values():
         parent = cells.get(c.get("parent"))
@@ -221,6 +292,42 @@ def route(e: Edge, boxes) -> list:
     return out
 
 
+LABEL_MAX_CHARS = 28   # per line: a protocol or kind of link, not a sentence
+LABEL_MAX_LINES = 2
+
+
+def point_along(path, t):
+    """Point at fraction t (0..1) of the polyline's length, and the index of its segment."""
+    segs = segments(path)
+    lens = [abs(q[0] - p[0]) + abs(q[1] - p[1]) for p, q in segs]
+    total = sum(lens)
+    if not total:
+        return path[0], 0
+    d = total * t
+    for k, ((p, q), ln) in enumerate(zip(segs, lens)):
+        if d <= ln or k == len(segs) - 1:
+            r = d / ln if ln else 0
+            return (p[0] + (q[0] - p[0]) * r, p[1] + (q[1] - p[1]) * r), k
+        d -= ln
+    return path[-1], len(segs) - 1
+
+
+def label_rect(e: Edge):
+    """Where draw.io draws the label: centred on the point at (x+1)/2 of the line."""
+    if not e.path or len(e.path) < 2:
+        return None
+    lines = [ln for ln in text_lines(e.value) if ln.strip()] or [""]
+    size = float(e.style.get("fontSize", 11))
+    w = max(len(ln) for ln in lines) * size * 0.6 + 8
+    h = len(lines) * size * 1.25 + 4
+    (cx, cy), _ = point_along(e.path, (e.label_x + 1) / 2)
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+
+def rects_overlap(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
 def seg_hits_rect(p, q, r) -> bool:
     """Axis-aligned segment p-q intersects the open rectangle r=(x1,y1,x2,y2)."""
     x1, y1, x2, y2 = r
@@ -280,10 +387,11 @@ def estimate_overflow(b: Box) -> bool:
     return need > b.h + 2
 
 
-def check_page(name, model):
+def check_page(name, model, lang: str | None = None):
     errors, warns = [], []
     boxes, edges = collect(model)
-    lbl = lambda e: f"edge {e.badge or e.id}"
+    lbl = lambda e: (f"edge {e.badge}" if e.badge else
+                     f"edge '{' '.join(text_lines(e.value)).strip()}'" if e.labelled else f"edge {e.id}")
 
     # corners
     for b in boxes.values():
@@ -302,6 +410,25 @@ def check_page(name, model):
             if a.x < b.x2 - 1 and b.x < a.x2 - 1 and a.y < b.y2 - 1 and b.y < a.y2 - 1:
                 errors.append(f"'{a.label()}' overlaps '{b.label()}'")
 
+    # language: every label in the diagram language (identifiers excluded)
+    script = lang_script(lang)
+    if script:
+        why = lang_mismatch(name, script)
+        if why:
+            warns.append(f"tab name '{name}' is not in the diagram language '{lang}' ({why})")
+        for b in boxes.values():
+            if b.kind == "badge":
+                continue
+            why = lang_mismatch("\n".join(text_lines(b.value)), script)
+            if why:
+                warns.append(f"'{b.label()}': text is not in the diagram language '{lang}' ({why})")
+        for e in edges:
+            if e.value and e.value.strip():
+                why = lang_mismatch("\n".join(text_lines(e.value)), script)
+                if why:
+                    warns.append(f"line label '{' '.join(text_lines(e.value)).strip()}' is not in the diagram "
+                                 f"language '{lang}' ({why})")
+
     # text fit
     for b in boxes.values():
         if estimate_overflow(b):
@@ -310,8 +437,14 @@ def check_page(name, model):
     # edges
     for e in edges:
         e.path = route(e, boxes)
-        if (e.value or "").strip() and len(re.sub(r"<[^>]+>", "", html.unescape(e.value)).strip()) > 3:
-            warns.append(f"{lbl(e)}: text label on the edge; use a numbered badge and explain it in the legend")
+        if e.labelled:
+            lines = [ln for ln in text_lines(e.value) if ln.strip()]
+            if len(lines) > LABEL_MAX_LINES or max(len(ln) for ln in lines) > LABEL_MAX_CHARS:
+                warns.append(f"{lbl(e)}: line label too long; name the protocol or kind of link, "
+                             "details go into the boxes")
+        elif (e.value or "").strip() and len(re.sub(r"<[^>]+>", "", html.unescape(e.value)).strip()) > 3:
+            warns.append(f"{lbl(e)}: free text on the edge; use a line label (kit label=) on a principal diagram "
+                         "or a numbered badge + legend on a functional one")
         if "exitX" not in e.style or "entryX" not in e.style:
             warns.append(f"{lbl(e)}: no explicit exit/entry, the route is drawio's guess; verify visually")
         for p, q in segments(e.path):
@@ -332,6 +465,50 @@ def check_page(name, model):
                     errors.append(f"{lbl(e)} runs through '{b.label()}'")
                 elif seg_hits_rect(p, q, b.inflate(CLEARANCE)):
                     warns.append(f"{lbl(e)} passes within {CLEARANCE}px of '{b.label()}' (tight corridor)")
+    # line labels: where draw.io puts them, and what they cover
+    labelled = [e for e in edges if e.labelled]
+    if labelled and any(e.badge for e in edges):
+        warns.append("the tab mixes numbered badges and line labels: a principal diagram labels lines, "
+                     "a functional one numbers them; pick one")
+    rects = {}
+    for e in labelled:
+        r = label_rect(e)
+        if r is None:
+            continue
+        rects[e.id] = r
+        pw, ph = float(model.get("pageWidth", 0) or 0), float(model.get("pageHeight", 0) or 0)
+        if pw and ph and (r[0] < 0 or r[1] < 0 or r[2] > pw or r[3] > ph):
+            errors.append(f"{lbl(e)}: label goes off the page; move it with label_at or re-route")
+        for b in boxes.values():
+            if b.kind in ("badge",):
+                continue
+            if b.kind == "container":
+                band = (b.x + 4, b.y, b.x + b.title_w, b.y + TITLE_BAND)
+                if rects_overlap(r, band):
+                    errors.append(f"{lbl(e)}: label covers the title of '{b.label()}'")
+                continue
+            if b.kind == "title":
+                continue
+            if rects_overlap(r, b.inflate(0)):
+                errors.append(f"{lbl(e)}: label covers '{b.label()}'; move it with label_at or re-route")
+        for o in edges:
+            if o is e:
+                continue
+            for p, q in segments(o.path):
+                if seg_hits_rect(p, q, r):
+                    errors.append(f"{lbl(o)} runs through the label of {lbl(e)}")
+                    break
+        inner = e.path[1:-1]
+        cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+        if any(abs(px - cx) < (r[2] - r[0]) / 2 + 2 and abs(py - cy) < (r[3] - r[1]) / 2 + 2 for px, py in inner):
+            warns.append(f"{lbl(e)}: label sits on a bend; move it to a straight run with label_at")
+    ids = list(rects)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            if rects_overlap(rects[a], rects[b]):
+                ea = next(x for x in edges if x.id == a); eb = next(x for x in edges if x.id == b)
+                errors.append(f"labels of {lbl(ea)} and {lbl(eb)} overlap")
+
     # edge vs edge
     for i, a in enumerate(edges):
         for b in edges[i + 1:]:
@@ -352,12 +529,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("file")
     ap.add_argument("--page", type=int, help="check only this tab (1-based)")
+    ap.add_argument("--lang", help="diagram language, e.g. ru, en, uz (default: the file's lang attribute)")
     args = ap.parse_args()
+    lang = args.lang or file_lang(args.file)
+    if not lang:
+        print("note: no diagram language (Diagram(pages, lang=...) or --lang): language check skipped")
+    elif not lang_script(lang):
+        print(f"note: script of language '{lang}' unknown: language check skipped")
     total_err = 0
     for n, (name, model) in enumerate(load_pages(args.file), 1):
         if args.page and n != args.page:
             continue
-        errors, warns = check_page(name, model)
+        errors, warns = check_page(name, model, lang)
         total_err += len(errors)
         print(f"[{n}] {name}: {len(errors)} error(s), {len(warns)} warning(s)")
         for m in errors:

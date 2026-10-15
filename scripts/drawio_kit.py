@@ -9,22 +9,28 @@ editable in the draw.io app.
 House rules this module bakes in (see references/style-guide.md):
   * corners: absolute arc of 6 px on every rectangle, containers included;
   * zones are pastel containers with a bold top-left title;
-  * edges are orthogonal, square-cornered, 1.5 px, with NO text on them: each edge
-    carries a numbered badge and the numbers are explained in a legend box;
+  * edges are orthogonal, square-cornered, 1.5 px. What an edge means is shown one
+    of two ways, never both on one tab:
+      - principal diagram (components and links): a short label on the line - the
+        protocol or kind of link ("HTTPS", "SQL", "OIDC"), `p.edge(..., label=...)`;
+      - functional diagram (a scenario): a numbered badge, the numbers explained
+        step by step in a legend box, `p.edge(a, b, "1", ...)`;
   * edge routes are given explicitly (waypoints) through empty corridors, so a line
     never crosses a box, a note or another line's run.
 
 Typical use (copy this file next to the generator, e.g. docs/drawio_kit.py):
 
-    from drawio_kit import Diagram, Page, Z
+    from drawio_kit import Diagram, Page, Z, terms
+    LANG = "ru"                     # the language of the conversation, not of the code
+    T = terms(LANG)
     p = Page("1. Вход пользователя")
     p.title("Вход в сервис: ...")
     p.zone(40, 60, 300, 780, "Вне кластера", Z.OUTSIDE)
     a = p.box(70, 120, 220, 80, "Браузер\\nштатная форма", Z.NEUTRAL)
     ...
     p.edge(a, b, "1", exit=(1, .5), entry=(0, .5))
-    p.legend(380, 700, 570, 140, "Шаги", ["1  браузер → nginx: ...", ...])
-    Diagram([p]).write("docs/architecture.drawio")
+    p.legend(380, 700, 570, 140, T["steps"], ["1  браузер → nginx: ...", ...])
+    Diagram([p], lang=LANG).write("docs/architecture.drawio")
     # then: python3 <skill>/scripts/check_layout.py docs/architecture.drawio
 """
 from __future__ import annotations
@@ -37,11 +43,12 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 
 # 6 px absolute corner radius. Relative arcSize scales with box size and produces
 # the "pill" look on large containers; absoluteArcSize keeps every corner equal.
 ARC = "rounded=1;absoluteArcSize=1;arcSize=6;"
+LABEL_SIZE = 11   # px, font of a line label on a principal diagram
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,42 @@ class Z:
     DENY = Zone("#ffebee", "#c62828", "#c62828", "#ffebee")     # blocked paths, 404/403
     NEUTRAL = Zone("#f5f5f5", "#999999", "#666666", "#f5f5f5")  # people, browsers, generic
     LEGEND = Zone("#fafafa", "#666666", "#666666", "#fafafa")
+
+
+# Every word on a diagram is written in the language of the conversation with the
+# user (tab names, title, zones, boxes, notes, legend). Identifiers - component
+# names, paths, ports, env vars, API fields - stay exactly as in the code.
+# Standard words the house style uses, per language; unknown languages fall back
+# to English and the generator writes its own words.
+TERMS: dict[str, dict[str, str]] = {
+    "ru": {"steps": "Шаги", "links": "Связи", "outside": "Вне периметра",
+           "outside_cluster": "Вне кластера", "cluster": "Кластер",
+           "observability": "Наблюдаемость", "users": "Пользователи",
+           "placeholder": "ДИАГРАММА: вставить сюда", "source": "Источник",
+           "tab": "вкладка", "shows": "Что показывает", "line_types": "Линии"},
+    "en": {"steps": "Steps", "links": "Connections", "outside": "Outside the perimeter",
+           "outside_cluster": "Outside the cluster", "cluster": "Cluster",
+           "observability": "Observability", "users": "Users",
+           "placeholder": "DIAGRAM: insert here", "source": "Source",
+           "tab": "tab", "shows": "What it shows", "line_types": "Lines"},
+    "uz": {"steps": "Qadamlar", "links": "Bog‘lanishlar", "outside": "Perimetrdan tashqarida",
+           "outside_cluster": "Klasterdan tashqarida", "cluster": "Klaster",
+           "observability": "Kuzatuv", "users": "Foydalanuvchilar",
+           "placeholder": "DIAGRAMMA: shu yerga qo‘ying", "source": "Manba",
+           "tab": "varaq", "shows": "Nimani ko‘rsatadi", "line_types": "Chiziqlar"},
+}
+
+
+def terms(lang: str) -> dict[str, str]:
+    """Standard diagram words in `lang` (e.g. "ru", "en", "uz"); English if unknown.
+
+    A region variant falls back to its base language ("en-GB" -> "en"); a script
+    variant we do not have ("uz-Cyrl") does not, since the base is in another script."""
+    key = (lang or "en").lower()
+    if key not in TERMS:
+        base, _, sub = key.partition("-")
+        key = base if base in TERMS and sub not in ("cyrl", "latn", "arab", "hans", "hant") else "en"
+    return {**TERMS["en"], **TERMS[key]}
 
 
 def _html(text: str) -> str:
@@ -125,13 +168,22 @@ class Page:
         return self.box(x, y, w, h, title + "\n" + "\n".join(items), Z.LEGEND, size=size)
 
     def edge(self, src: str, dst: str, num: str = "", *, exit=None, entry=None, points=(),
-             color: str = "#444444", dashed: bool = False) -> str:
-        """Orthogonal edge with a numbered badge instead of a text label.
+             color: str = "#444444", dashed: bool = False, label: str = "", label_at: float = 0) -> str:
+        """Orthogonal edge, explained either by a numbered badge (`num`, functional
+        diagram) or by a short line label (`label`, principal diagram). Not both.
 
         exit/entry: (fx, fy) on the source/target box, 0..1, e.g. (1, .5) = middle of
         the right side. points: explicit waypoints [(x, y), ...] that keep the route in
         an empty corridor. Give both whenever the straight route would touch anything.
+        label: the protocol or kind of link, 1-3 words ("HTTPS :443", "SQL", "OIDC");
+        "\n" for a second line. It sits on the line with a white background.
+        label_at: where along the line, -1 (source) .. 0 (middle, default) .. 1 (target);
+        move it off a bend or away from a neighbour's line.
         """
+        if num and label:
+            raise ValueError("an edge carries a numbered badge or a label, not both")
+        if not -1 <= label_at <= 1:
+            raise ValueError("label_at is a position along the line: -1 .. 1")
         st = (f"edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor={color};strokeWidth=1.5;"
               "endArrow=blockThin;endFill=1;jumpStyle=arc;jumpSize=8;")
         if dashed:
@@ -140,10 +192,19 @@ class Page:
             st += f"exitX={exit[0]};exitY={exit[1]};exitDx=0;exitDy=0;"
         if entry:
             st += f"entryX={entry[0]};entryY={entry[1]};entryDx=0;entryDy=0;"
+        value = ""
+        geo_x = ""
+        if label:
+            # houseLabel marks a label placed on purpose; the checker verifies where it lands.
+            st += (f"houseLabel=1;fontSize={LABEL_SIZE};fontColor={color};labelBackgroundColor=#ffffff;"
+                   "align=center;verticalAlign=middle;spacing=2;")
+            value = _html(label)
+            geo_x = f' x="{label_at}"' if label_at else ""
         i = self._id()
         pts = "".join(f'<mxPoint x="{px}" y="{py}"/>' for px, py in points)
-        geo = '<mxGeometry relative="1" as="geometry">' + (f'<Array as="points">{pts}</Array>' if pts else "") + "</mxGeometry>"
-        self.cells.append(f'<mxCell id="{i}" value="" style="{st}" edge="1" parent="1" source="{src}" target="{dst}">{geo}</mxCell>')
+        geo = f'<mxGeometry{geo_x} relative="1" as="geometry">' + (f'<Array as="points">{pts}</Array>' if pts else "") + "</mxGeometry>"
+        self.cells.append(f'<mxCell id="{i}" value="{html.escape(value, quote=True)}" style="{st}" edge="1" parent="1" '
+                          f'source="{src}" target="{dst}">{geo}</mxCell>')
         if num:
             j = self._id()
             bst = (f"ellipse;whiteSpace=wrap;html=1;fillColor={color};strokeColor=none;fontColor=#ffffff;"
@@ -237,12 +298,17 @@ def hand_edited(path: pathlib.Path) -> bool:
 class Diagram:
     """A .drawio file: one tab per concern."""
 
-    def __init__(self, pages: list[Page]):
+    def __init__(self, pages: list[Page], lang: str | None = None):
+        """lang: the language every label is written in (the conversation's, e.g.
+        "ru", "en", "uz"). Stored in the file so check_layout.py can verify it."""
         self.pages = pages
+        self.lang = lang
 
     def render(self) -> str:
         body = "\n".join(p.xml() for p in self.pages)
-        return f'<mxfile host="Electron" agent="drawio_kit {__version__}" version="24.0.0" type="device">\n{body}\n</mxfile>\n'
+        lang = f' lang="{html.escape(self.lang, quote=True)}"' if self.lang else ""
+        return (f'<mxfile host="Electron" agent="drawio_kit {__version__}" version="24.0.0" type="device"{lang}>\n'
+                f'{body}\n</mxfile>\n')
 
     def write(self, path: str | pathlib.Path, backup: bool = True) -> pathlib.Path:
         """Write the .drawio. With backup=True (default) the previous version is

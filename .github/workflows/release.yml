@@ -1,0 +1,27 @@
+name: release
+
+# Push a tag v<VERSION> (e.g. v1.3.0): tests run, then drawio-diagrams.zip for
+# claude.ai is attached to a GitHub release of that tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Tag matches VERSION
+        run: test "${GITHUB_REF_NAME#v}" = "$(cat VERSION)"
+      - name: Test and package
+        run: ./package.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/drawio-diagrams.zip --title "$GITHUB_REF_NAME" --generate-notes

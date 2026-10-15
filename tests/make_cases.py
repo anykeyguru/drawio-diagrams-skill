@@ -9,7 +9,7 @@ import zlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
-from drawio_kit import Diagram, Page, Z  # noqa: E402
+from drawio_kit import Diagram, Page, Z, terms  # noqa: E402
 
 OUT = HERE / "cases"
 OUT.mkdir(exist_ok=True)
@@ -17,8 +17,8 @@ for old in OUT.glob("*.drawio"):
     old.unlink()
 
 
-def save(name, page):
-    Diagram([page]).write(OUT / f"{name}.drawio", backup=False)
+def save(name, page, lang=None):
+    Diagram([page], lang=lang).write(OUT / f"{name}.drawio", backup=False)
 
 
 def two_boxes(p):
@@ -120,5 +120,94 @@ p.box(400, 244, 120, 80, "Neighbour\nbelow the line", Z.NEUTRAL)
 c = p.box(620, 200, 200, 80, "C\nright", Z.APP)
 p.edge(a, c, "1", exit=(1, .5), entry=(0, .5))
 save("warn-tight-corridor", p)
+
+# ---- language: every label in the language of the conversation ---------------
+
+def lang_page(lang, name, title, boxes, legend, label=""):
+    T = terms(lang)
+    p = Page(name); p.title(title)
+    a = p.box(100, 200, 260, 80, boxes[0], Z.APP)
+    b = p.box(560, 200, 260, 80, boxes[1], Z.APP)
+    if label:
+        p.edge(a, b, label=label, exit=(1, .5), entry=(0, .5))
+    else:
+        p.edge(a, b, "1", exit=(1, .5), entry=(0, .5))
+    p.legend(100, 400, 660, 60, T["links"], [legend])
+    return p
+
+
+save("ok-lang-ru", lang_page("ru", "1. Вызов модели", "Как приложение вызывает модель через LiteLLM",
+     ["Приложение\nOpenAI SDK, ключ sk-…", "LiteLLM :4000\nпроверяет ключ, team и бюджет"],
+     "1  приложение → LiteLLM: POST /v1/chat/completions"), "ru")
+save("ok-lang-en", lang_page("en", "1. Model call", "How an application calls the model through LiteLLM",
+     ["Application\nOpenAI SDK, key sk-…", "LiteLLM :4000\nchecks the key, team and budget"],
+     "1  application → LiteLLM: POST /v1/chat/completions"), "en")
+save("ok-lang-uz", lang_page("uz", "1. Model chaqiruvi", "Ilova modelni LiteLLM orqali qanday chaqiradi",
+     ["Ilova\nOpenAI SDK, kalit sk-…", "LiteLLM :4000\nkalit, team va byudjetni tekshiradi"],
+     "1  ilova → LiteLLM: POST /v1/chat/completions"), "uz")
+save("warn-lang-en-has-russian", lang_page("en", "1. Model call", "How an application calls the model through LiteLLM",
+     ["Application\nOpenAI SDK, key sk-…", "LiteLLM :4000\nпроверяет ключ и бюджет"],
+     "1  application → LiteLLM: POST /v1/chat/completions"), "en")
+save("warn-lang-ru-has-english", lang_page("ru", "1. Вызов модели", "Как приложение вызывает модель через LiteLLM",
+     ["Приложение\nOpenAI SDK, ключ sk-…", "LiteLLM :4000\nchecks the key and the budget"],
+     "1  приложение → LiteLLM: POST /v1/chat/completions"), "ru")
+save("warn-lang-tab-name", lang_page("en", "1. Вызов модели", "How an application calls the model through LiteLLM",
+     ["Application\nOpenAI SDK, key sk-…", "LiteLLM :4000\nchecks the key, team and budget"],
+     "1  application → LiteLLM: POST /v1/chat/completions"), "en")
+
+# ---- principal diagram: short labels on the lines ------------------------------
+p = Page("ok"); p.title("Principal: labelled lines, labels on straight runs")
+a = p.box(100, 120, 200, 80, "App\nclient", Z.APP)
+b = p.box(560, 120, 200, 80, "API\nservice", Z.APP)
+c = p.box(560, 360, 200, 80, "DB\nstorage", Z.DATA)
+p.edge(a, b, label="HTTPS :443", exit=(1, .5), entry=(0, .5))
+p.edge(b, c, label="SQL", exit=(.5, 1), entry=(.5, 0), color=Z.DATA.box)
+p.edge(a, c, label="read-only\nreplica", label_at=.3, exit=(.5, 1), entry=(0, .5), points=[(200, 400)])
+save("ok-principal-labels", p, "en")
+
+p = Page("err"); p.title("Line label lands on a box")
+a = p.box(100, 200, 200, 80, "A\nleft", Z.APP)
+p.box(380, 150, 100, 60, "Small\nbox", Z.NEUTRAL)
+b = p.box(560, 200, 200, 80, "B\nright", Z.APP)
+p.edge(a, b, label="a rather long label", exit=(1, .2), entry=(0, .2))
+save("err-label-covers-box", p)
+
+p = Page("err"); p.title("Another line runs through a label")
+a, b = two_boxes(p)
+c = p.box(370, 80, 60, 40, "C", Z.APP); d = p.box(370, 380, 60, 40, "D", Z.APP)
+p.edge(a, b, label="HTTPS", exit=(1, .5), entry=(0, .5))
+p.edge(c, d, exit=(.5, 1), entry=(.5, 0), dashed=True)
+save("err-line-through-label", p)
+
+p = Page("err"); p.title("Two labels overlap")
+a = p.box(100, 200, 200, 80, "A\nleft", Z.APP)
+b = p.box(600, 200, 200, 80, "B\nright", Z.APP)
+p.edge(a, b, label="HTTPS", exit=(1, .4), entry=(0, .4))
+p.edge(b, a, label="callback", exit=(0, .6), entry=(1, .6))
+save("err-labels-overlap", p)
+
+p = Page("warn"); p.title("Line label is a sentence")
+a = p.box(100, 200, 200, 80, "A\nleft", Z.APP)
+b = p.box(800, 200, 200, 80, "B\nright", Z.APP)
+p.edge(a, b, label="sends the request with the key and waits", exit=(1, .5), entry=(0, .5))
+save("warn-label-too-long", p)
+
+p = Page("warn"); p.title("Line label sits on a bend")
+a = p.box(100, 100, 200, 80, "A\nsource", Z.APP)
+b = p.box(500, 400, 200, 80, "B\ntarget", Z.APP)
+p.edge(a, b, label="AMQP", exit=(1, .5), entry=(.5, 0), points=[(600, 140)], label_at=.08)
+save("warn-label-on-bend", p)
+
+p = Page("warn"); p.title("One tab mixes badges and labels")
+a = p.box(100, 120, 200, 80, "A\nleft", Z.APP)
+b = p.box(560, 120, 200, 80, "B\nright", Z.APP)
+c = p.box(560, 360, 200, 80, "C\nbelow", Z.APP)
+p.edge(a, b, label="HTTPS", exit=(1, .5), entry=(0, .5))
+p.edge(b, c, "1", exit=(.5, 1), entry=(.5, 0))
+save("warn-mixed-badges-and-labels", p)
+
+save("warn-lang-label", lang_page("ru", "1. Вызов модели", "Как приложение вызывает модель через LiteLLM",
+     ["Приложение\nOpenAI SDK, ключ sk-…", "LiteLLM :4000\nпроверяет ключ, team и бюджет"],
+     "1  приложение → LiteLLM: POST /v1/chat/completions", label="calls the model with the key"), "ru")
 
 print(f"{len(list(OUT.glob('*.drawio')))} cases in {OUT}")

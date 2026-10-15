@@ -1,42 +1,57 @@
 # Diagram types
 
-Pick the type first: it decides the template. One system usually needs 2–3 types, each
-on its own tab of the same `.drawio`.
+Pick the kind first: it decides how lines are explained and which template to use.
+One system often needs a principal map plus one functional tab per important
+scenario, each on its own tab of the same `.drawio`.
 
-## How to tell them apart (the clarifying question)
+## How to tell them apart (the question offered to the user)
 
-| If the user wants to know… | Type |
-|---|---|
-| what the application consists of and how its parts depend on each other | 1. Принципиальная схема / архитектура приложения |
-| how our service works together with existing systems: who calls whom, across which perimeter | 2. Функциональная схема взаимодействия с узлами инфраструктуры |
-| what happens to each request path at the edge (proxy / ingress / gateway) | 3. Маршрутизация (роуты) |
-| how code becomes a running service and where its telemetry goes | 4. Поставка и CI/CD (+ наблюдаемость) |
-| where data comes from, what transforms it, where it lands | 5. Поток данных / ETL |
-| the order of calls in one scenario, with branches and errors | not draw.io: sequence diagram, msd-sequence-diagram skill |
+| If the user wants to know… | Kind | Lines carry |
+|---|---|---|
+| what the system consists of and what is connected to what | 1. Принципиальная схема / principal | a short label: protocol or kind of link |
+| how one scenario runs through the system, step by step | 2. Функциональная схема / functional | a number; the legend explains each step |
+| what happens to each request path at the edge (proxy / ingress / gateway) | 3. Маршрутизация / routing | numbers explained per rule |
+| how code becomes a running service and where its telemetry goes | 4. Поставка и CI/CD / delivery | numbers, legend «Связи» |
+| where data comes from, what transforms it, where it lands | 5. Поток данных / data flow | labels (what flows) or numbers (in which order) |
+| the order of calls with branches and errors | not draw.io: sequence diagram, msd-sequence-diagram skill | |
 
-Suggested AskUserQuestion: header «Тип схемы», question «Какую схему строим?», options =
-the five types above with one-line descriptions. Ask only if the request does not say it.
+AskUserQuestion (always, unless the request already names the kind), in the
+conversation's language: header «Схема» / "Diagram", question «Какую схему делаем?» /
+"Which diagram should I draw?", options = kinds 1–4 with one-line descriptions from
+the table; kind 5 through "Other". Recommend 1 when the user asked about
+"architecture" or "how the parts connect", 2 when they described a scenario.
 
-## 1. Принципиальная схема / архитектура приложения
+## 1. Принципиальная схема / principal diagram
 
-What goes on: components of the application (services, workers, stores, queues, external
-APIs it owns a client for), dependencies between them, protocols and ports where they
-matter. Not on: infrastructure the application does not know about.
+What goes on: the components (services, workers, stores, queues, external systems),
+zones = perimeters or ownership, and every link between components as a line with a
+short label: the protocol, port or kind of link (`HTTPS`, `HTTP :9000`, `SQL`,
+`OIDC`, `LDAPS :636`, «очередь arq», «секреты»). Not on: the order of calls, what
+happens inside a component, numbers.
 
 ```
-┌ Клиенты ┐   ┌──────────── Приложение ────────────┐   ┌ Хранилища / внешние API ┐
-│ UI      │──▶│ API ──▶ домен ──▶ адаптеры         │──▶│ БД, кеш, очередь        │
-│ джобы   │   │        воркеры / джобы             │   │ внешние сервисы         │
-└─────────┘   └────────────────────────────────────┘   └─────────────────────────┘
+┌ Клиенты ┐            ┌──────────── Система ─────────────┐         ┌ Внешние ┐
+│ браузер │──HTTPS────▶│ edge ──HTTP──▶ API ──SQL──▶ БД   │──OIDC──▶│ IdP     │
+│ прилож. │──API key──▶│         API ──AMQP──▶ воркер     │         └─────────┘
+└─────────┘            └──────────────────────────────────┘
 ```
 
-Columns left → right in call direction; layers top → bottom inside the application zone.
+- columns left → right in call direction; layers top → bottom inside a zone;
+- labels sit on straight runs, so leave runs at least as long as the label (≈ 7 px
+  per character + 10) between boxes, or pick a longer run with `label_at`;
+- the legend (`T["line_types"]`) explains line styles and colours only: solid =
+  network call, dashed = configuration / secrets / async, colour = zone;
+- details belong in the boxes: ports, roles, key settings.
 
-## 2. Функциональная схема взаимодействия с узлами инфраструктуры
+Worked example: tab 4 of `examples/build_architecture.py`.
 
-What goes on: our components, the existing systems they talk to (IdP, directory, secret
-store, proxies, LLM backends…), zones = perimeters (outside / our cluster / other teams'
-systems), the interactions of one scenario numbered in order, config and secret sources.
+## 2. Функциональная схема / functional diagram (a scenario, step by step)
+
+What goes on: the components one scenario touches, the existing systems they talk to
+(IdP, directory, secret store, proxies, LLM backends…), zones = perimeters (outside /
+our cluster / other teams' systems), the interactions of the scenario numbered in
+order, config and secret sources. The legend «Шаги» / Steps explains every number:
+«N  кто → кому: что».
 
 ```
 ┌ Вне кластера ┐  ┌─────────── Кластер ───────────┐  ┌ Внешняя система (IdP) ┐

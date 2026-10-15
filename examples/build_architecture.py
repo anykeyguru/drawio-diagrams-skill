@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Worked example: the three-tab architecture of openwebui-auth-bridge.
+"""Worked example: the four-tab architecture of openwebui-auth-bridge.
 
-Login flow with infrastructure nodes (type 2), delivery + observability (type 4),
-nginx routing (type 3). Passes check_layout.py with zero findings. In a project this
+Functional diagrams (numbered steps + legend): login flow with infrastructure nodes,
+delivery + observability, nginx routing. Principal diagram (labelled lines, no
+steps): the same login system as a map of components and links. Passes check_layout.py with zero findings. In a project this
 file is docs/build_architecture.py and writes docs/architecture.drawio.
 
 Original docstring:
@@ -21,14 +22,19 @@ HERE = pathlib.Path(__file__).resolve().parent
 # In a project the kit sits next to this file (docs/drawio_kit.py). In the skill
 # repository the example imports it from ../scripts.
 sys.path.insert(0, str(HERE.parent / "scripts"))
-from drawio_kit import Diagram, Page, Z, export_png  # noqa: E402
+from drawio_kit import Diagram, Page, Z, export_png, terms  # noqa: E402
+
+# Every label is written in the language of the conversation the diagram was asked in
+# (here Russian). Identifiers stay as in the code. The checker verifies it.
+LANG = "ru"
+T = terms(LANG)
 G, P, O, B, Y, R = Z.APP.box, Z.IDP.box, Z.OUTSIDE.box, Z.DATA.box, Z.SECRET.box, Z.DENY.box
 
 
 def page_login() -> Page:
     p = Page("1. Вход пользователя", height=920)
     p.title("Вход в Open WebUI через Keycloak-bridge: пароль проверяют Keycloak и AD, пользователь не покидает страницу Open WebUI")
-    p.zone(40, 60, 270, 800, "Вне кластера", Z.OUTSIDE)
+    p.zone(40, 60, 270, 800, T["outside_cluster"], Z.OUTSIDE)
     browser = p.box(70, 120, 210, 80, "Человек (браузер)\nштатная форма входа Open WebUI\nemail + пароль из AD", Z.NEUTRAL)
     p.note(70, 230, 210, 150, "Редиректа на Keycloak нет: его страница входа, redirect URI и OIDC-клиент с authorization code не нужны.\n\nПароль живёт только в AD. В Open WebUI у пользователя случайный локальный пароль, которым никто не пользуется.")
     vault = p.box(70, 700, 210, 90, "Хранилище секретов\nKC_CLIENT_SECRET, SCIM_TOKEN,\nWEBUI_SECRET_KEY", Z.OUTSIDE)
@@ -40,7 +46,7 @@ def page_login() -> Page:
     bridge = p.box(720, 320, 230, 180, "auth-bridge ×2 (:9000)\npassword-grant в Keycloak\nuserinfo: email, имя, группы\nгруппы: только openwebui-*\nроль: ADMIN_GROUP → admin\nгруппы в Open WebUI через SCIM\n/healthz /readyz /metrics", Z.APP)
     cm = p.box(720, 520, 230, 80, "ConfigMap auth-bridge-env\nKEYCLOAK_URL, KC_REALM,\nKC_CLIENT_ID, OPENWEBUI_URL,\nADMIN_GROUP, GROUP_PREFIX", Z.APP, size=11)
     sec = p.box(720, 615, 230, 60, "Secret auth-bridge\nKC_CLIENT_SECRET, SCIM_TOKEN", Z.SECRET)
-    p.legend(380, 700, 570, 145, "Шаги", [
+    p.legend(380, 700, 570, 145, T["steps"], [
         "1  браузер → nginx: форма входа, POST signin и GET /api/config",
         "2  nginx → bridge: только эти два пути",
         "3  bridge → Keycloak: /token grant_type=password, затем /userinfo",
@@ -56,7 +62,7 @@ def page_login() -> Page:
     fed = p.box(1050, 240, 280, 110, "User Federation → AD/LDAP\nvendor Active Directory\nимпорт пользователей, Trust email\nbrute-force detection On", Z.IDP)
     groups = p.box(1050, 370, 280, 100, "Группы (создаёт админ Keycloak)\nopenwebui-admins → role admin\nopenwebui-* → в Open WebUI\nгруппы AD не уезжают", Z.IDP)
     kadmin = p.box(1050, 500, 280, 80, "Администратор Keycloak\nкладёт людей из AD в группы;\nправа групп — в Open WebUI", Z.IDP, fill="#f3e5f5")
-    p.zone(1020, 650, 340, 210, "Вне кластера", Z.OUTSIDE)
+    p.zone(1020, 650, 340, 210, T["outside_cluster"], Z.OUTSIDE)
     ad = p.box(1050, 700, 280, 110, "Корпоративный AD / LDAP\nldap(s):// 389/636\nпользователи, mail / UPN, пароли;\nгруппы каталога не используются", Z.OUTSIDE)
 
     p.edge(browser, nginx, "1", exit=(1, .5), entry=(0, .35))
@@ -88,15 +94,15 @@ def page_delivery() -> Page:
     p.zone(960, 60, 400, 420, "Кластер, namespace openwebui", Z.APP)
     kust = p.box(990, 100, 340, 80, "deploy/k8s (Kustomize, только bridge)\nDeployment ×2, Service :9000, ConfigMap, Secret\nоверлей: образ, KEYCLOAK_URL, OPENWEBUI_URL", Z.APP, size=11)
     p.box(990, 200, 340, 110, "Уже существуют, настраиваются\nOpen WebUI: env trusted-header, SCIM\nnginx / ingress: правила nginx/default.conf\nKeycloak: клиент, federation, группы", Z.APP, fill="#f1f8e9")
-    kbridge = p.box(990, 340, 340, 90, "Pod auth-bridge\nimage: harbor…/ai/openwebui-auth-bridge:<owui>-rN\nliveness /healthz, readiness /readyz\nprometheus.io/scrape, port 9000", Z.APP, size=11)
+    kbridge = p.box(990, 340, 340, 90, "Pod auth-bridge\nобраз: harbor…/ai/openwebui-auth-bridge:<owui>-rN\nпробы: liveness /healthz, readiness /readyz\nprometheus.io/scrape, порт 9000", Z.APP, size=11)
 
-    p.zone(40, 520, 1320, 320, "Наблюдаемость", Z.DATA)
+    p.zone(40, 520, 1320, 320, T["observability"], Z.DATA)
     prom = p.box(70, 570, 400, 130, "Prometheus\nscrape auth-bridge:9000/metrics каждые 15 с\nRED: http_requests_total, http_request_duration_seconds\nбизнес: auth_bridge_logins_total{outcome}, roles, SCIM\nзависимости: outbound_requests_total{target,status}", Z.DATA, size=11)
     graf = p.box(510, 570, 400, 130, "Grafana\nдашборд openwebui-auth-bridge (deploy/grafana)\nверхний ряд: логины/мин, отказы, 5xx, p95\nряды: исходы, латентность, зависимости, SCIM,\nпроцесс, алерты pending/firing", Z.DATA, size=11)
     logs = p.box(950, 570, 380, 130, "Логи\nstdout JSON: ts, level, service, env, version,\ntrace_id, span_id, msg + поля события\nколлектор → Loki → Grafana по trace_id\nLOG_FORMAT=text только для dev", Z.DATA, size=11)
     rules = p.box(70, 720, 400, 100, "Правила алертов\ndeploy/monitoring/prometheus/alerts.yml\n3 critical, 4 warning, у каждого runbook_url", Z.DATA, size=11)
     p.box(510, 720, 400, 100, "Локальный кит ~/code/prometheus\ndocker-compose.obs.yml через COMPOSE_FILE\nlab-scenarios.sh: все исходы, хэппи и отказы", Z.DATA, fill="#f5f5f5", size=11)
-    p.legend(950, 720, 380, 105, "Связи", [
+    p.legend(950, 720, 380, 105, T["links"], [
         "1 пайплайн   2 pull через proxy-cache   3 push образа",
         "4 кластер тянет образ   5 kubectl apply -k",
         "6 scrape /metrics   7 rule_files   8 datasource",
@@ -132,7 +138,7 @@ def page_routing() -> Page:
     kc = p.box(1170, 160, 190, 100, "Keycloak\n/token (grant_type=password)\n/userinfo", Z.IDP)
     not_found = p.box(900, 420, 220, 110, "404 Not Found\nотвечает сам nginx,\nдо приложений запрос\nне доходит", Z.DENY)
     owui = p.box(900, 600, 220, 120, "Open WebUI :8080\nдоверяет X-Forwarded-*\nтолько от bridge\n(NetworkPolicy)", Z.APP)
-    p.legend(1140, 600, 220, 230, "Связи", [
+    p.legend(1140, 600, 220, 230, T["links"], [
         "1 все запросы браузера", "2 signin в auth-bridge", "3 /api/config в auth-bridge",
         "4 signup и ldap: 404", "5 SCIM: 404", "6 остальное, включая /ws:\n   в Open WebUI",
         "7 bridge в Keycloak:\n   /token, /userinfo", "8 bridge в Open WebUI:\n   SCIM, signin",
@@ -148,10 +154,55 @@ def page_routing() -> Page:
     return p
 
 
-PAGES = [("login", page_login), ("delivery", page_delivery), ("routing", page_routing)]
+def page_principal() -> Page:
+    """Principal diagram: the same system as tab 1, as a map of components and links.
+    No steps: each line is labelled with its protocol or kind of link."""
+    p = Page("4. Принципиальная схема", height=920)
+    p.title("Из чего состоит вход в Open WebUI через Keycloak-bridge и как компоненты связаны")
+    p.zone(40, 60, 270, 800, T["outside_cluster"], Z.OUTSIDE)
+    browser = p.box(70, 120, 210, 80, "Браузер\nштатная форма входа\nOpen WebUI", Z.NEUTRAL)
+    vault = p.box(70, 700, 210, 90, "Хранилище секретов\nKC_CLIENT_SECRET, SCIM_TOKEN,\nWEBUI_SECRET_KEY", Z.OUTSIDE)
+
+    p.zone(350, 60, 630, 800, "Кластер, namespace openwebui", Z.APP)
+    nginx = p.box(380, 110, 230, 140, "Ingress + nginx\nединственная публичная точка\nsignin и /api/config → bridge\nостальное → Open WebUI\nX-Forwarded-* вырезаются", Z.APP)
+    owui = p.box(380, 320, 230, 160, "Open WebUI :8080\nдоверенные заголовки\nот bridge, SCIM включён,\nсвой JWT и cookie", Z.APP)
+    llm = p.box(380, 560, 230, 60, "LLM-бэкенды\nOllama / OpenAI-совместимые", Z.DATA, fill="#e3f2fd")
+    bridge = p.box(720, 320, 230, 180, "auth-bridge ×2 :9000\nпроверяет пароль в Keycloak,\nберёт группы openwebui-*,\nназначает роль,\nсоздаёт группы через SCIM", Z.APP)
+    cm = p.box(720, 560, 230, 70, "ConfigMap auth-bridge-env\nадреса, realm, клиент", Z.APP, size=11)
+    sec = p.box(720, 660, 230, 60, "Secret auth-bridge\nKC_CLIENT_SECRET, SCIM_TOKEN", Z.SECRET)
+    p.legend(380, 760, 570, 80, T["line_types"], [
+        "сплошная: вызов по сети, подпись = протокол или вид связи",
+        "пунктир: конфигурация и секреты, которые читает компонент",
+        "цвет линии = зона: фиолетовый Keycloak, жёлтый секреты, синий данные",
+    ])
+
+    p.zone(1020, 60, 340, 430, "Keycloak (realm)", Z.IDP)
+    client = p.box(1050, 100, 280, 110, "Клиент open-webui-bridge\nDirect access grants: On\nмаппер групп → groups", Z.IDP)
+    fed = p.box(1050, 240, 280, 100, "User Federation\nActive Directory,\nимпорт пользователей", Z.IDP)
+    groups = p.box(1050, 370, 180, 90, "Группы\nopenwebui-*,\nopenwebui-admins\n→ admin", Z.IDP)
+    p.zone(1020, 540, 340, 320, T["outside_cluster"], Z.OUTSIDE)
+    ad = p.box(1050, 600, 280, 110, "Корпоративный AD / LDAP\nпользователи и пароли", Z.OUTSIDE)
+
+    p.edge(browser, nginx, label="HTTPS", exit=(1, .75), entry=(0, .5))
+    p.edge(nginx, bridge, label="HTTP :9000", exit=(1, .5), entry=(.5, 0), points=[(835, 180)], label_at=-.3)
+    p.edge(nginx, owui, label="HTTP, WebSocket", exit=(.5, 1), entry=(.5, 0))
+    p.edge(bridge, client, label="OIDC", exit=(1, .15), entry=(0, .5), points=[(1000, 347), (1000, 155)], color=P)
+    p.edge(fed, ad, label="LDAPS :636", exit=(.857, 1), entry=(.857, 0), color=P, label_at=-.5)
+    p.edge(bridge, owui, label="SCIM", exit=(0, .35), entry=(1, .39375))
+    p.edge(bridge, owui, label="signin", exit=(0, .75), entry=(1, .84375))
+    p.edge(owui, llm, label="OpenAI API", exit=(.5, 1), entry=(.5, 0), color=B)
+    p.edge(cm, bridge, dashed=True, exit=(.5, 0), entry=(.5, 1), color="#888888")
+    p.edge(sec, bridge, dashed=True, exit=(1, .5), entry=(1, .9), points=[(990, 690), (990, 482)], color=Y)
+    p.edge(vault, sec, label="синхронизация", dashed=True, exit=(1, .5), entry=(0, .5), points=[(330, 745), (330, 690)], color=Y, label_at=-.2)
+    p.edge(groups, fed, exit=(.5, 0), entry=(.321, 1), color="#7e57c2")
+    return p
+
+
+PAGES = [("login", page_login), ("delivery", page_delivery), ("routing", page_routing),
+         ("principal", page_principal)]
 
 if __name__ == "__main__":
-    out = Diagram([build() for _, build in PAGES]).write(HERE / "architecture.drawio")
+    out = Diagram([build() for _, build in PAGES], lang=LANG).write(HERE / "architecture.drawio")
     print(out)
     checker = HERE.parent / "scripts" / "check_layout.py"
     if not checker.exists():

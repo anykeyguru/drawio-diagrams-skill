@@ -10,8 +10,8 @@ follow it too; `check_layout.py` enforces the measurable parts.
 | Page size | 1400 × 900 (raise height to ~920–1000 only when a tab really needs it) |
 | Outer margin | 40 px on all sides |
 | Title | `p.title(...)`: one line at y = 15, 14 px bold, states the one question the tab answers |
-| Tabs | one concern per tab, named `N. Тема` («1. Вход пользователя», «2. Поставка и наблюдаемость») |
-| Language | Russian for Confluence/internal docs unless the user says otherwise; component names, paths and env vars stay as in the code |
+| Tabs | one concern per tab, named `N. Topic` in the diagram's language («1. Вход пользователя», "1. User sign-in") |
+| Language | the language of the conversation with the user (`LANG` in the generator, `Diagram(pages, lang=LANG)`), for every label; component names, paths, ports and env vars stay as in the code. The checker warns about labels in another script |
 
 ## Zones (containers)
 
@@ -61,14 +61,17 @@ border, and a long title is in their way. Put explanations into a note inside th
 | Property | Value |
 |---|---|
 | Style | orthogonal, square bends (`rounded=0`), 1.5 px, block-thin arrow |
-| Label | none; a numbered badge (20 px circle, edge colour, white number) at the middle |
-| Legend | a box with title «Шаги» (flows) or «Связи» (structures): one line per number, «N  кто → кому: что» |
+| Principal diagram | a line label: 1–3 words, protocol or kind of link, `label=` (11 px, edge colour, white background), on a straight run, `label_at` -1..1 to move it along the line; at most 2 lines of 28 characters |
+| Functional diagram | a numbered badge (20 px circle, edge colour, white number) at the middle; no label |
+| Never | a badge and labels on the same tab, or a sentence along a line |
+| Legend, functional | a box titled `T["steps"]` for a scenario or `T["links"]` for structures (ru «Шаги» / «Связи», en Steps / Connections, uz Qadamlar / Bog‘lanishlar): one line per number, «N  who → whom: what» in the diagram's language |
+| Legend, principal | a small box titled `T["line_types"]` (ru «Линии», en Lines): what solid, dashed and each colour mean; no per-line entries |
 | Colour | the zone colour of the relationship: identity calls `Z.IDP.box`, secrets `Z.SECRET.box`, observability `Z.DATA.box`, deny `Z.DENY.box`, plain calls `#444444` |
 | Dashed | configuration, async, optional or "reads from" (env, secrets, scrape, logs) |
 | Ports | always explicit `exit=(fx, fy)` and `entry=(fx, fy)`; different fractions for different edges on the same side |
-| Unnumbered edges | allowed only for trivial structural links (ConfigMap → Deployment) that need no legend line |
+| Unnumbered / unlabelled edges | allowed only for trivial structural links (ConfigMap → Deployment) that need no explanation |
 
-Numbering follows the reading order of the main flow (1 is where the story starts).
+On a functional tab numbering follows the reading order of the scenario (1 is where the story starts).
 
 ## Files
 
@@ -80,4 +83,4 @@ Numbering follows the reading order of the main flow (1 is where the story start
 | Previews | `docs/architecture-<N>-<slug>.png`, exported by the generator or `review.py` |
 | Backups | `docs/.drawio-backups/<name>.<timestamp>.drawio`, newest 10, written by `Diagram.write()` before overwriting; git-ignored together with draw.io's `.$*.bkp` (the kit adds both patterns to `.gitignore`) |
 | Sequence diagrams | `docs/<flow>-sequence.msd` (msd-sequence-diagram skill) |
-| Confluence | `docs/confluence/*.md` with `🖼️ ДИАГРАММА` placeholders |
+| Confluence | `docs/confluence/*.md` with `🖼️` placeholders in the diagram's language (`terms(LANG)["placeholder"]`) |
