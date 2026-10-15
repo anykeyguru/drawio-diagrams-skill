@@ -141,6 +141,7 @@ the repository's `.gitignore`, appending them if missing. Backups never reach gi
 
 ```
 SKILL.md                        what Claude follows: commands, rules, workflow, delivery
+CLAUDE.md                       maintainer notes: invariants, changing, releasing
 VERSION                         skill version (= drawio_kit.__version__)
 references/style-guide.md       palette, geometry, corridors, edges, labels, legends, files
 references/diagram-types.md     the diagram kinds, the question offered, layout templates
@@ -179,8 +180,8 @@ The language comes from the file (`Diagram(pages, lang=...)`) or `--lang`.
 tests/run.sh
 ```
 
-Runs on GitHub Actions for every push and pull request (Python 3.9 and 3.13; the PNG
-export step is skipped there, draw.io is not installed).
+Runs on GitHub Actions for every push and pull request (Python 3.9 and 3.13 on
+Ubuntu 24.04; the PNG export step is skipped there, draw.io is not installed).
 
 - generated cases, one per rule, named by the expected verdict (`ok-*`, `warn-*`,
   `err-*`): geometry, line labels, label language, a compressed file as the draw.io
